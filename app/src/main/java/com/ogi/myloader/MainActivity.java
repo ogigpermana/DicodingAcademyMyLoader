@@ -1,0 +1,164 @@
+package com.ogi.myloader;
+
+import android.Manifest;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
+import android.net.Uri;
+import android.provider.ContactsContract;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
+import android.support.v4.app.LoaderManager;
+import android.support.v4.content.CursorLoader;
+import android.support.v4.content.Loader;
+import android.support.v7.app.AppCompatActivity;
+import android.os.Bundle;
+import android.util.Log;
+import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ListView;
+import android.widget.ProgressBar;
+import android.widget.Toast;
+
+import com.ogi.myloader.adapter.ContactAdapter;
+
+public class MainActivity extends AppCompatActivity implements LoaderManager.LoaderCallbacks<Cursor>, AdapterView.OnItemClickListener {
+
+    public static final String TAG = "ContactApp";
+
+    private final int CONTACT_REQUEST_CODE = 101;
+    private final int CALL_REQUEST_CODE = 102;
+    private final int CONTACT_LOAD = 110;
+    private final int CONTACT_SELECT = 120;
+
+    ProgressBar pbContact;
+    ListView lvContact;
+    ContactAdapter mAdapter;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        lvContact = findViewById(R.id.lv_contact);
+        pbContact = findViewById(R.id.pb_contact);
+
+        lvContact.setVisibility(View.INVISIBLE);
+        pbContact.setVisibility(View.GONE);
+
+        mAdapter = new ContactAdapter(MainActivity.this, null, true);
+        lvContact.setAdapter(mAdapter);
+        lvContact.setOnItemClickListener(this);
+
+        if (PermissionManager.isGranted(this, Manifest.permission.READ_CONTACTS)){
+            LoaderManager.getInstance(this).initLoader(CONTACT_LOAD, null, this);
+            // getSupportLoaderManager().initLoader(CONTACT_LOAD, null, this);
+        }else {
+            PermissionManager.check(this, Manifest.permission.READ_CONTACTS, CONTACT_REQUEST_CODE);
+        }
+    }
+
+    @NonNull
+    @Override
+    public Loader<Cursor> onCreateLoader(int id, @Nullable Bundle args) {
+        CursorLoader mCursorLoader = null;
+        if (id == CONTACT_LOAD){
+            pbContact.setVisibility(View.VISIBLE);
+
+            String[] projectionFields = new String[]{
+                    ContactsContract.Contacts._ID,
+                    ContactsContract.Contacts.DISPLAY_NAME,
+                    ContactsContract.Contacts.PHOTO_URI
+            };
+
+            mCursorLoader = new CursorLoader(MainActivity.this,
+                    ContactsContract.Contacts.CONTENT_URI,
+                    projectionFields,
+                    ContactsContract.Contacts.HAS_PHONE_NUMBER + "=1",
+                    null, ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC");
+        }else if (id == CONTACT_SELECT){
+            String[] phoneProjectionFields = new String[]{ContactsContract.CommonDataKinds.Phone.NUMBER};
+            mCursorLoader = new CursorLoader(MainActivity.this,
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    phoneProjectionFields,
+                    ContactsContract.CommonDataKinds.Phone.CONTACT_ID + " = ? AND " +
+                            ContactsContract.CommonDataKinds.Phone.TYPE + " = " +
+                            ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE + " AND " +
+                            ContactsContract.CommonDataKinds.Phone.HAS_PHONE_NUMBER + "=1",
+                    new String[]{args.getString("id")},
+                    null);
+        }
+        return mCursorLoader;
+    }
+
+    @Override
+    public void onLoadFinished(@NonNull Loader<Cursor> loader, Cursor data) {
+        Log.d(TAG, "LoadFinished");
+        if (loader.getId() == CONTACT_LOAD){
+            if (data.getCount() > 0){
+                lvContact.setVisibility(View.VISIBLE);
+                mAdapter.swapCursor(data);
+            }
+            pbContact.setVisibility(View.GONE);
+        }else if (loader.getId() == CONTACT_SELECT){
+            String contactNumber = null;
+            if (data.moveToFirst()){
+                contactNumber = data.getString(data.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER));
+            }
+
+            if (PermissionManager.isGranted(this, Manifest.permission.CALL_PHONE)){
+                Intent dialIntent = new Intent(Intent.ACTION_CALL, Uri.parse("tel:" + contactNumber));
+                startActivity(dialIntent);
+            }else {
+                PermissionManager.check(this, Manifest.permission.CALL_PHONE, CALL_REQUEST_CODE);
+            }
+        }
+    }
+
+    @Override
+    public void onLoaderReset(@NonNull Loader<Cursor> loader) {
+        if (loader.getId() == CONTACT_LOAD) {
+            pbContact.setVisibility(View.GONE);
+            mAdapter.swapCursor(null);
+            Log.d(TAG, "LoaderReset");
+        }
+    }
+
+    @Override
+    public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+        Cursor cursor = (Cursor) parent.getAdapter().getItem(position);
+        long mContactId = cursor.getLong(0);
+        Log.d(TAG, "Position : " + position + " " + mContactId);
+        getPhoneNumber(String.valueOf(mContactId));
+    }
+
+    private void getPhoneNumber(String contactID){
+         Bundle bundle = new Bundle();
+         bundle.putString("id", contactID);
+        LoaderManager.getInstance(this).restartLoader(CONTACT_SELECT, bundle, this);
+//         getSupportLoaderManager().restartLoader(CONTACT_SELECT, bundle, this);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+//        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == CONTACT_REQUEST_CODE){
+            if (grantResults.length > 0){
+                if (grantResults[0] == PackageManager.PERMISSION_GRANTED){
+//                    getSupportLoaderManager().initLoader(CONTACT_LOAD, null, this);
+                    LoaderManager.getInstance(this).initLoader(CONTACT_LOAD, null, this);
+                    Toast.makeText(this, "Contact permission diterima", Toast.LENGTH_SHORT).show();
+                }else {
+                    Toast.makeText(this, "Contact permission ditolak", Toast.LENGTH_SHORT).show();
+                }
+            }
+        }else if (requestCode == CALL_REQUEST_CODE){
+            if (grantResults.length > 0){
+                if (grantResults[0] == PackageManager.PERMISSION_GRANTED){
+                    Toast.makeText(this, "Call permission diterima", Toast.LENGTH_SHORT).show();
+                }else {
+                    Toast.makeText(this, "Call permission ditolak", Toast.LENGTH_SHORT).show();
+                }
+            }
+        }
+    }
+}
